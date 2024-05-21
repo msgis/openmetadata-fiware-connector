@@ -55,13 +55,20 @@ class FiwareConnector(Source):
 
         if not self.broker_url:
             raise InvalidFiwareConnectorException("Missing required connection option 'broker_url' in service connection.")
-        
         if not self.database_name and not self.fiware_service:
             raise InvalidFiwareConnectorException("Missing required connection option 'database_name' or 'fiware_service' in service connection.")
-        
         if not self.schema_name and not self.fiware_service_path:
             raise InvalidFiwareConnectorException("Missing required connector option 'schema_name' or 'fiware_service_path' in service connection.")
-    
+
+        if not self.fiware_service:
+            self.database = self.database_name
+        else:
+            self.database = self.fiware_service
+        
+        if not self.fiware_service_path:
+            self.schema = self.schema_name
+        else:
+            self.schema = self.fiware_service_path
     
         self.data: Optional[List[Any]] = None
         super().__init__()
@@ -114,15 +121,10 @@ class FiwareConnector(Source):
         service_entity: DatabaseService = self.metadata.get_by_name(
                 entity=DatabaseService, fqn=self.config.serviceName
             )
-        
-        if not self.fiware_service:
-            name = self.database_name
-        else:
-            name = self.fiware_service
 
         yield Either(
             right=CreateDatabaseRequest(
-                name=name,
+                name=self.database,
                 service=service_entity.fullyQualifiedName,
             )
         )
@@ -130,17 +132,12 @@ class FiwareConnector(Source):
     def yield_schema(self):
         # Pick up the service we just created (if not UI)
         database_entity: Database = self.metadata.get_by_name(
-            entity=Database, fqn=f"{self.config.serviceName}.{self.database_name}"
+            entity=Database, fqn=f"{self.config.serviceName}.{self.database}"
         )
-
-        if not self.fiware_service_path:
-            name = self.schema_name
-        else:
-            name = self.fiware_service_path
 
         yield Either(
             right=CreateDatabaseSchemaRequest(
-                name=name,
+                name=self.schema,
                 database=database_entity.fullyQualifiedName,
             )
         )
@@ -149,14 +146,9 @@ class FiwareConnector(Source):
         """
         Iterate over the data list to create tables
         """
-        if not self.fiware_service_path:
-            schema = self.schema_name
-        else:
-            schema = self.fiware_service_path
-        
         database_schema: DatabaseSchema = self.metadata.get_by_name(
             entity=DatabaseSchema,
-            fqn=f"{self.config.serviceName}.{self.database_name}.{schema}",
+            fqn=f"{self.config.serviceName}.{self.database_name}.{self.schema}",
         )
 
         for type in self.data:
