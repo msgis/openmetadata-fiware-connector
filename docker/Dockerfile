@@ -1,4 +1,4 @@
-FROM openmetadata/ingestion:1.2.0
+FROM openmetadata/ingestion:1.3.3
 
 # Let's use the same workdir as the ingestion image
 WORKDIR /ingestion

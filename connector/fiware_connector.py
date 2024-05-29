@@ -1,4 +1,5 @@
 import requests
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Iterable, Optional, List, Any
 from re import sub
@@ -71,6 +72,7 @@ class FiwareConnector(Source):
             self.schema = self.fiware_service_path
     
         self.data: Optional[List[Any]] = None
+        self.api_version = 'UNKNOWN'
         super().__init__()
 
     @classmethod
@@ -98,15 +100,64 @@ class FiwareConnector(Source):
 
     def query_context_broker(self, base_url, headers):
         data = []
-        query_url = base_url + "/v2/types"
+
+        match urlparse(base_url).path.split('/')[1:]:
+            case ['ngsi-ld', 'v1', *further]:
+                self.api_version = 'NGSI-LD'
+            case ['v1', *further]:
+                self.api_version = 'NGSIv1'
+            case ['v2', *further]:
+                self.api_version = 'NGSIv2'
+            case anyotherpath:
+                logger.warning('Could not identify NGSI API Version')
+
+        logger.info(f'Context Broker API Version is {self.api_version}')
+
+        query_url = base_url + '/types'
         try:
             response = requests.get(query_url, headers=headers)
-            data = response.json()
-            logger.info(f"DATA: {data}")
+
+            match self.api_version:
+                case 'NGSI-LD':
+                    data = [{"type": t, "attrs": {}} for t in response.json()['typeList']]
+                    logger.info(f"DATA: {data}")
+                case 'NGSIv1' | 'NGSIv2':
+                    data = response.json()
+                    data = [{"type": t['type'], "attrs": {k: {"type": v['types'][0]} for k,v in t['attrs'].items()}} for t in data]
+                    logger.info(f"DATA: {data}")
+                    return data
+                case other:
+                    logger.error('Unable to query types.')
+
         except Exception as e:
-            logger.error(f"Error querying context broker on {base_url}: {e}")
-            raise InvalidFiwareConnectorException(f"Error querying context broker on {base_url}: {e}")
-    
+            logger.error(f"Error querying context broker on {query_url}: {e}")
+            raise InvalidFiwareConnectorException(f"Error querying context broker on {query_url}: {e}")
+
+        for type_dict in data:
+            t = type_dict['type']
+            query_url = base_url + f'/entities/?type={t}'
+
+            logger.info(f"Getting attributes of {base_url}")
+
+            try:
+                response = requests.get(query_url, headers=headers)
+                resp = response.json()
+                first_sample = resp[0]
+                first_sample.pop('id', None)
+                first_sample.pop('type', None)
+
+                for attr,value in first_sample.items():
+                    logger.info(f"Adding attribute {attr}")
+
+                    dt = self.map_datatype_by_value(attr, value['value'])
+                    type_dict['attrs'][attr] = {'type': dt}
+
+
+            except Exception as e:
+                logger.error(f"Error querying context broker on {query_url}: {e}")
+                raise InvalidFiwareConnectorException(f"Error querying context broker on {query_url}: {e}")
+
+        logger.info(f"DATA: {data}")
         return data
 
     def yield_create_request_database_service(self):
@@ -151,18 +202,17 @@ class FiwareConnector(Source):
             fqn=f"{self.config.serviceName}.{self.database_name}.{self.schema}",
         )
 
-        for type in self.data:
+        for entity in self.data:
             yield Either(
                 right=CreateTableRequest(
-                    name=type['type'],
+                    name=entity['type'],
                     databaseSchema=database_schema.fullyQualifiedName,
                     columns=[
                         Column(
                             name=key,
-                            dataType=self.map_datatypes(key, type['attrs']),
-                            description=type['attrs'][key]['types'][0],
+                            dataType=entity['attrs'][key]['type']
                         )
-                        for key in type['attrs'].keys()
+                        for key in entity['attrs'].keys()
                     ],
                 )
             )
@@ -176,6 +226,18 @@ class FiwareConnector(Source):
             return 'FLOAT'
         elif 'str' in datatype:
             return 'STRING'
+        else:
+            return 'NULL'
+
+    def map_datatype_by_value(self, key, value):
+        if key == 'location':
+            return 'JSON'
+        elif isinstance(value, str):
+            return 'STRING'
+        elif isinstance(value, int):
+            return 'INT'
+        elif isinstance(value, float):
+            return 'FLOAT'
         else:
             return 'NULL'
         

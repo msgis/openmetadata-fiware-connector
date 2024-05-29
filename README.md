@@ -9,11 +9,11 @@ We'll need to package the code so that it can be shipped to the ingestion contai
 
 If you want to use the connector from the UI, the `openmetadata-ingestion` image should be aware of your new package.
 
-We will be running the against the OpenMetadata version `1.2.0`, therefore, our Dockerfile looks like:
+We will be running the against the OpenMetadata version `1.3.3`, therefore, our Dockerfile looks like:
 
 ```Dockerfile
 # Base image from the right version
-FROM openmetadata/ingestion:1.2.0
+FROM openmetadata/ingestion:1.3.3
 
 # Let's use the same workdir as the ingestion image
 WORKDIR ingestion
